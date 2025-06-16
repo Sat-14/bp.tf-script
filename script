@@ -296,13 +296,19 @@
             result.defindex = parseInt(mainPart);
         }
 
-        // Check if the item is strange elevated first
-        // This needs to be done before processing other attributes
-        const hasStrange = parts.includes('strange');
+        // Check for quality in second position (format: defindex;quality;attributes)
+        if (parts.length > 1 && !isNaN(parseInt(parts[1])) && parseInt(parts[1]) < 20) {
+            result.quality = parseInt(parts[1]);
+        }
         
         // Parse additional attributes
         for (let i = 1; i < parts.length; i++) {
             const part = parts[i];
+            
+            // Skip if this is the quality we already parsed
+            if (i === 1 && !isNaN(parseInt(part)) && parseInt(part) < 20) {
+                continue;
+            }
             
             if (part.startsWith('u')) {
                 result.particle = parseInt(part.substring(1));
@@ -321,9 +327,10 @@
             } else if (part === 'untradable') {
                 result.tradable = false;
             } else if (part === 'strange') {
-                result.elevated = true;
-                // If quality is not Strange (11), it's an elevated quality item
-                // Keep the original quality (e.g., Genuine = 1)
+                // This is an elevated strange item if quality is not already 11
+                if (result.quality !== 11) {
+                    result.elevated = true;
+                }
             } else if (part.startsWith('c')) {
                 result.crate = parseInt(part.substring(1));
             } else if (part.startsWith('td-')) {
@@ -562,7 +569,8 @@
         if (skuData.wear) {
             attributes.push({ defindex: 725, float_value: skuData.wear / 10 });
         }
-        if (skuData.elevated) {
+        if (skuData.elevated && skuData.quality !== 11) {
+            // This is a Strange elevated item (Strange Genuine, Strange Vintage, etc.)
             attributes.push({ defindex: 214, float_value: 0 });
         }
         if (skuData.crate) {
@@ -620,8 +628,6 @@
                 appid: 440,
                 defindex: skuData.defindex,
                 quality: skuData.quality,
-                tradable: skuData.tradable,
-                craftable: skuData.craftable,
                 attributes: attributes
             },
             intent: 'buy',
@@ -632,7 +638,17 @@
             details: formData.get('details') || ''
         };
 
+        // Only include craftable/tradable if they are false
+        if (!skuData.craftable) {
+            payload.item.craftable = false;
+        }
+        if (!skuData.tradable) {
+            payload.item.tradable = false;
+        }
+
         console.log('Creating buy order with payload:', payload);
+        console.log('SKU Data:', skuData);
+        console.log('Quality:', skuData.quality, 'Elevated:', skuData.elevated);
 
         // Create the listing
         createBuyOrder(payload);
