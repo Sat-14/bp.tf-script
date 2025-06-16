@@ -1,0 +1,662 @@
+// ==UserScript==
+// @name         Backpack.tf - Create Buy Order from SKU
+// @namespace    http://tampermonkey.net/
+// @version      1.0.0
+// @description  Create buy orders by pasting SKU and selecting attributes
+// @author       Sat-14
+// @connect      backpack.tf
+// @match        https://backpack.tf/classifieds*
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=backpack.tf
+// @grant        GM_xmlhttpRequest
+// @grant        GM_addStyle
+// @run-at       document-end
+// ==/UserScript==
+
+(function () {
+    "use strict";
+
+    // Configuration - Add your API key and user token here
+    const BACKPACK_TF_API_KEY = "";
+    const BACKPACK_TF_USER_TOKEN = "j";
+
+    GM_addStyle(`
+        .sku-creator-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            z-index: 10001;
+            max-width: 600px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            border-radius: 8px;
+        }
+        .sku-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 10000;
+        }
+        .sku-form-item {
+            display: flex;
+            gap: 0.5rem;
+            flex-direction: column;
+            margin-bottom: 1rem;
+        }
+        .sku-form-item label {
+            font-weight: bold;
+            color: #333;
+        }
+        .sku-form-item input, .sku-form-item select, .sku-form-item textarea {
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .sku-item-group {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+        .sku-item-group > * {
+            flex: 1 1 200px;
+        }
+        .sku-modal-header {
+            padding: 1rem;
+            background-color: #f5f5f5;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .sku-modal-body {
+            padding: 1.5rem;
+        }
+        .sku-modal-footer {
+            padding: 1rem;
+            background-color: #f5f5f5;
+            border-top: 1px solid #ddd;
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+        }
+        .sku-create-button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            cursor: pointer;
+            border-radius: 4px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .sku-create-button:hover {
+            background-color: #45a049;
+        }
+        .sku-error-message {
+            color: red;
+            margin-top: 0.5rem;
+            font-size: 0.9em;
+        }
+        .sku-info-message {
+            color: #666;
+            font-size: 0.85em;
+            margin-top: 0.25rem;
+        }
+    `);
+
+    // Item definitions and attributes
+    const SPELLS = {
+        None: undefined,
+        "Footsteps Spell: Team Spirit Footprints": { float_value: 1, defindex: 1005 },
+        "Footsteps Spell: Headless Horseshoes": { float_value: 2, defindex: 1005 },
+        "Footsteps Spell: Gangreen Footprints": { float_value: 8421376, defindex: 1005 },
+        "Footsteps Spell: Corpse Gray Footprints": { float_value: 3100495, defindex: 1005 },
+        "Footsteps Spell: Violent Violet Footprints": { float_value: 5322826, defindex: 1005 },
+        "Footsteps Spell: Rotten Orange Footprints": { float_value: 13595446, defindex: 1005 },
+        "Footsteps Spell: Bruised Purple Footprints": { float_value: 8208497, defindex: 1005 },
+        "Paint Spell: Die Job": { float_value: 0, defindex: 1004 },
+        "Paint Spell: Chromatic Corruption": { float_value: 1, defindex: 1004 },
+        "Paint Spell: Putrescent Pigmentation": { float_value: 2, defindex: 1004 },
+        "Paint Spell: Spectral Spectrum": { float_value: 3, defindex: 1004 },
+        "Paint Spell: Sinister Staining": { float_value: 4, defindex: 1004 },
+        "Standard Spell: Voices From Below": { float_value: 1, defindex: 1006 },
+        "Weapon Spell: Pumpkin Bombs": { float_value: 1, defindex: 1007 },
+        "Weapon Spell: Halloween Fire": { float_value: 1, defindex: 1008 },
+        "Weapon Spell: Exorcism": { float_value: 1, defindex: 1009 },
+    };
+
+    const PARTS = {
+        None: undefined,
+        "Scouts Killed": "10",
+        "Snipers Killed": "11",
+        "Soldiers Killed": "12",
+        "Demomen Killed": "13",
+        "Heavies Killed": "14",
+        "Pyros Killed": "15",
+        "Spies Killed": "16",
+        "Engineers Killed": "17",
+        "Medics Killed": "18",
+        "Buildings Destroyed": "19",
+        "Projectiles Reflected": "20",
+        "Headshot Kills": "21",
+        "Airborne Enemy Kills": "22",
+        "Gib Kills": "23",
+        "Kills Under A Full Moon": "27",
+        Dominations: "28",
+        Revenges: "30",
+        "Posthumous Kills": "31",
+        "Teammates Extinguished": "32",
+        "Critical Kills": "33",
+        "Kills While Explosive-Jumping": "34",
+        "Sappers Removed": "36",
+        "Cloaked Spies Killed": "37",
+        "Medics Killed That Have Full ÜberCharge": "38",
+        "Robots Destroyed": "39",
+        "Giant Robots Destroyed": "40",
+        "Kills While Low Health": "44",
+        "Kills During Halloween": "45",
+        "Robots Killed During Halloween": "46",
+        "Defender Kills": "47",
+        "Submerged Enemy Kills": "48",
+        "Kills While Invuln ÜberCharged": "49",
+        "Tanks Destroyed": "61",
+        "Long-Distance Kills": "62",
+        "Kills during Victory Time": "67",
+        "Robot Scouts Destroyed": "68",
+        "Robot Spies Destroyed": "74",
+        "Taunt Kills": "77",
+        "Unusual-Wearing Player Kills": "78",
+        "Burning Player Kills": "79",
+        "Killstreaks Ended": "80",
+        "Freezecam Taunt Appearances": "81",
+        "Damage Dealt": "82",
+        "Fires Survived": "83",
+        "Allied Healing Done": "84",
+        "Point Blank Kills": "85",
+        Kills: "87",
+        "Full Health Kills": "88",
+        "Taunting Player Kills": "89",
+        "Not Crit nor MiniCrit Kills": "93",
+        "Player Hits": "94",
+        Assists: "95",
+    };
+
+    const PAINTS = {
+        None: undefined,
+        "Indubitably Green": 7511618,
+        "Zepheniah's Greed": 4345659,
+        "Noble Hatter's Violet": 5322826,
+        "Color No. 216-190-216": 14204632,
+        "A Deep Commitment to Purple": 8208497,
+        "Mann Co. Orange": 13595446,
+        "Muskelmannbraun": 10843461,
+        "Peculiarly Drab Tincture": 12955537,
+        "Radigan Conagher Brown": 6901050,
+        "Ye Olde Rustic Colour": 8154199,
+        "Australium Gold": 15185211,
+        "Aged Moustache Grey": 8289918,
+        "An Extraordinary Abundance of Tinge": 15132390,
+        "A Distinctive Lack of Hue": 1315860,
+        "Team Spirit": 12073019,
+        "Pink as Hell": 16738740,
+        "A Color Similar to Slate": 3100495,
+        "Drably Olive": 8421376,
+        "The Bitter Taste of Defeat and Lime": 3329330,
+        "The Color of a Gentlemann's Business Pants": 15787660,
+        "Dark Salmon Injustice": 15308410,
+        "Operator's Overalls": 4732984,
+        "Waterlogged Lab Coat": 11049612,
+        "Balaclavas Are Forever": 3874595,
+        "An Air of Debonair": 6637376,
+        "The Value of Teamwork": 8400928,
+        "Cream Spirit": 12807213,
+        "A Mann's Mint": 12377523,
+        "After Eight": 2960676,
+        "Legacy Paint": 5801378
+    };
+
+    const KILLSTREAKERS = {
+        None: undefined,
+        'Fire Horns': 2002,
+        'Cerebral Discharge': 2003,
+        'Tornado': 2004,
+        'Flames': 2005,
+        'Singularity': 2006,
+        'Incinerator': 2007,
+        'Hypno-Beam': 2008
+    };
+
+    const SHEENS = {
+        None: undefined,
+        "Team Shine": 1,
+        "Deadly Daffodil": 2,
+        "Manndarin": 3,
+        "Mean Green": 4,
+        "Agonizing Emerald": 5,
+        "Villainous Violet": 6,
+        "Hot Rod": 7,
+    };
+
+    const QUALITIES = {
+        "Normal": 0,
+        "Genuine": 1,
+        "Vintage": 3,
+        "Unusual": 5,
+        "Unique": 6,
+        "Community": 7,
+        "Valve": 8,
+        "Self-Made": 9,
+        "Strange": 11,
+        "Haunted": 13,
+        "Collector's": 14,
+        "Decorated Weapon": 15
+    };
+
+    const WEARS = {
+        None: undefined,
+        "Factory New": 1,
+        "Minimal Wear": 2,
+        "Field-Tested": 3,
+        "Well-Worn": 4,
+        "Battle Scarred": 5
+    };
+
+    function parseSKU(sku) {
+        const parts = sku.split(';');
+        const result = {
+            defindex: null,
+            quality: 6, // Default to Unique
+            particle: null,
+            australium: false,
+            festivized: false,
+            killstreak: null,
+            paintkit: null,
+            wear: null,
+            tradable: true,
+            craftable: true,
+            elevated: false,
+            crate: null,
+            targetDefindex: null,
+            output: null
+        };
+
+        // Parse defindex and quality
+        const mainPart = parts[0];
+        if (mainPart.includes('-')) {
+            const [defindex, quality] = mainPart.split('-');
+            result.defindex = parseInt(defindex);
+            result.quality = parseInt(quality);
+        } else {
+            result.defindex = parseInt(mainPart);
+        }
+
+        // Parse additional attributes
+        for (let i = 1; i < parts.length; i++) {
+            const part = parts[i];
+
+            if (part.startsWith('u')) {
+                result.particle = parseInt(part.substring(1));
+            } else if (part === 'australium') {
+                result.australium = true;
+            } else if (part === 'festive') {
+                result.festivized = true;
+            } else if (part.startsWith('kt-')) {
+                result.killstreak = parseInt(part.split('-')[1]);
+            } else if (part.startsWith('pk')) {
+                result.paintkit = parseInt(part.substring(2));
+            } else if (part.startsWith('w')) {
+                result.wear = parseInt(part.substring(1));
+            } else if (part === 'uncraftable') {
+                result.craftable = false;
+            } else if (part === 'untradable') {
+                result.tradable = false;
+            } else if (part === 'strange') {
+                result.elevated = true;
+            } else if (part.startsWith('c')) {
+                result.crate = parseInt(part.substring(1));
+            } else if (part.startsWith('td-')) {
+                // Target defindex for killstreak kits
+                result.targetDefindex = parseInt(part.split('-')[1]);
+            } else if (part.startsWith('od-')) {
+                // Output defindex for chemistry sets, strangifiers, etc.
+                result.output = parseInt(part.split('-')[1]);
+            }
+        }
+
+        return result;
+    }
+
+    function generateOptionHTML(options, selected) {
+        return Object.keys(options)
+            .map(option =>
+                `<option value="${option}" ${option === selected ? "selected" : ""}>${option}</option>`
+            )
+            .join("");
+    }
+
+    function showSKUModal() {
+        // Remove existing modal if any
+        closeSKUModal();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'sku-modal-overlay';
+        overlay.onclick = closeSKUModal;
+
+        const modal = document.createElement('div');
+        modal.className = 'sku-creator-modal';
+        modal.onclick = (e) => e.stopPropagation();
+
+        modal.innerHTML = `
+            <div class="sku-modal-header">
+                <h3>Create Buy Order from SKU</h3>
+                <button type="button" class="close" onclick="closeSKUModal()">×</button>
+            </div>
+            <form id="skuForm" class="sku-modal-body">
+                <div class="sku-form-item">
+                    <label for="sku">Item SKU:</label>
+                    <input type="text" id="sku" name="sku" placeholder="e.g., 5021;6 or 30497;5;u13" required>
+                    <div class="sku-info-message">Enter the item SKU (defindex;quality;attributes)</div>
+                </div>
+
+                <div class="sku-item-group">
+                    <div class="sku-form-item">
+                        <label for="buyKeys">Keys:</label>
+                        <input type="number" id="buyKeys" name="buyKeys" min="0" step="1" value="0">
+                    </div>
+                    <div class="sku-form-item">
+                        <label for="buyMetal">Metal (ref):</label>
+                        <input type="number" id="buyMetal" name="buyMetal" step="0.11" value="0">
+                    </div>
+                </div>
+
+                <div class="sku-form-item">
+                    <label for="details">Details:</label>
+                    <textarea id="details" name="details" maxlength="200" rows="3"></textarea>
+                </div>
+
+                <hr style="margin: 1.5rem 0;">
+                <h4>Additional Attributes (Optional)</h4>
+
+                <div class="sku-form-item" id="targetItemContainer" style="display: none;">
+                    <label for="targetItem">Target Item (for Killstreak Kits):</label>
+                    <input type="text" id="targetItem" name="targetItem" placeholder="Will be auto-filled from SKU" readonly>
+                    <div class="sku-info-message">This field is automatically populated from the SKU (td-XXX)</div>
+                </div>
+
+                <div class="sku-item-group">
+                    <div class="sku-form-item">
+                        <label for="spell1">Spell 1:</label>
+                        <select name="spell1" id="spell1">${generateOptionHTML(SPELLS, 'None')}</select>
+                    </div>
+                    <div class="sku-form-item">
+                        <label for="spell2">Spell 2:</label>
+                        <select name="spell2" id="spell2">${generateOptionHTML(SPELLS, 'None')}</select>
+                    </div>
+                </div>
+
+                <div class="sku-item-group">
+                    <div class="sku-form-item">
+                        <label for="paint">Paint:</label>
+                        <select name="paint" id="paint">${generateOptionHTML(PAINTS, 'None')}</select>
+                    </div>
+                    <div class="sku-form-item">
+                        <label for="sheen">Sheen:</label>
+                        <select name="sheen" id="sheen">${generateOptionHTML(SHEENS, 'None')}</select>
+                    </div>
+                    <div class="sku-form-item">
+                        <label for="killstreaker">Killstreaker:</label>
+                        <select name="killstreaker" id="killstreaker">${generateOptionHTML(KILLSTREAKERS, 'None')}</select>
+                    </div>
+                </div>
+
+                <div id="partSelectors" style="display: none;">
+                    <div class="sku-item-group">
+                        <div class="sku-form-item">
+                            <label for="part1">Part 1:</label>
+                            <select name="part1" id="part1">${generateOptionHTML(PARTS, 'None')}</select>
+                        </div>
+                        <div class="sku-form-item">
+                            <label for="part2">Part 2:</label>
+                            <select name="part2" id="part2">${generateOptionHTML(PARTS, 'None')}</select>
+                        </div>
+                        <div class="sku-form-item">
+                            <label for="part3">Part 3:</label>
+                            <select name="part3" id="part3">${generateOptionHTML(PARTS, 'None')}</select>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="errorMessage" class="sku-error-message"></div>
+            </form>
+            <div class="sku-modal-footer">
+                <button type="submit" form="skuForm" class="btn btn-primary">Create Buy Order</button>
+                <button type="button" class="btn btn-default" onclick="closeSKUModal()">Cancel</button>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+        document.body.appendChild(modal);
+
+        // Handle SKU parsing
+        const skuInput = document.getElementById('sku');
+        skuInput.addEventListener('blur', function() {
+            const skuData = parseSKU(this.value);
+            // Show part selectors for Strange quality items
+            if (skuData.quality === 11 || skuData.elevated) {
+                document.getElementById('partSelectors').style.display = 'block';
+            } else {
+                document.getElementById('partSelectors').style.display = 'none';
+            }
+
+            // Show target item field for killstreak kits
+            if (skuData.targetDefindex) {
+                document.getElementById('targetItemContainer').style.display = 'block';
+                document.getElementById('targetItem').value = `Defindex: ${skuData.targetDefindex}`;
+            } else {
+                document.getElementById('targetItemContainer').style.display = 'none';
+            }
+        });
+
+        // Handle form submission
+        document.getElementById('skuForm').onsubmit = handleSKUFormSubmit;
+    }
+
+    function closeSKUModal() {
+        const overlay = document.querySelector('.sku-modal-overlay');
+        const modal = document.querySelector('.sku-creator-modal');
+        if (overlay) overlay.remove();
+        if (modal) modal.remove();
+    }
+
+    function handleSKUFormSubmit(e) {
+        e.preventDefault();
+
+        const errorMsg = document.getElementById('errorMessage');
+        errorMsg.textContent = '';
+
+        // Check if token is configured
+        if (!BACKPACK_TF_USER_TOKEN) {
+            errorMsg.textContent = 'Please configure your Backpack.tf user token in the script.';
+            return;
+        }
+
+        const formData = new FormData(e.target);
+        const sku = formData.get('sku');
+        const skuData = parseSKU(sku);
+
+        if (!skuData.defindex) {
+            errorMsg.textContent = 'Invalid SKU format. Please enter a valid SKU.';
+            return;
+        }
+
+        // Build attributes array
+        const attributes = [];
+
+        // Add SKU-based attributes
+        if (skuData.particle) {
+            attributes.push({ defindex: 134, float_value: skuData.particle });
+        }
+        if (skuData.australium) {
+            attributes.push({ defindex: 2027 });
+        }
+        if (skuData.festivized) {
+            attributes.push({ defindex: 2053 });
+        }
+        if (skuData.killstreak) {
+            attributes.push({ defindex: 2025, float_value: skuData.killstreak });
+        }
+        if (skuData.paintkit) {
+            attributes.push({ defindex: 834, value: skuData.paintkit });
+        }
+        if (skuData.wear) {
+            attributes.push({ defindex: 725, float_value: skuData.wear / 10 });
+        }
+        if (skuData.elevated) {
+            attributes.push({ defindex: 214, float_value: 0 });
+        }
+        if (skuData.crate) {
+            attributes.push({ defindex: 187, float_value: skuData.crate });
+        }
+
+        // Add form-selected attributes
+        const spell1 = formData.get('spell1');
+        const spell2 = formData.get('spell2');
+        const paint = formData.get('paint');
+        const sheen = formData.get('sheen');
+        const killstreaker = formData.get('killstreaker');
+        const part1 = formData.get('part1');
+        const part2 = formData.get('part2');
+        const part3 = formData.get('part3');
+
+        if (spell1 !== 'None' && SPELLS[spell1]) {
+            attributes.push(SPELLS[spell1]);
+        }
+        if (spell2 !== 'None' && SPELLS[spell2]) {
+            attributes.push(SPELLS[spell2]);
+        }
+        if (paint !== 'None' && PAINTS[paint]) {
+            attributes.push({ defindex: 142, float_value: PAINTS[paint] });
+        }
+        if (sheen !== 'None' && SHEENS[sheen]) {
+            attributes.push({ defindex: 2014, float_value: SHEENS[sheen] });
+        }
+        if (killstreaker !== 'None' && KILLSTREAKERS[killstreaker]) {
+            attributes.push({ defindex: 2013, float_value: KILLSTREAKERS[killstreaker] });
+        }
+        if (part1 !== 'None' && PARTS[part1]) {
+            attributes.push({ defindex: 380, float_value: parseInt(PARTS[part1]) });
+        }
+        if (part2 !== 'None' && PARTS[part2]) {
+            attributes.push({ defindex: 382, float_value: parseInt(PARTS[part2]) });
+        }
+        if (part3 !== 'None' && PARTS[part3]) {
+            attributes.push({ defindex: 384, float_value: parseInt(PARTS[part3]) });
+        }
+
+        // Add target defindex for killstreak kits
+        if (skuData.targetDefindex) {
+            attributes.push({ defindex: 2012, float_value: skuData.targetDefindex });
+        }
+
+        // Add output defindex for chemistry sets, strangifiers, etc.
+        if (skuData.output) {
+            attributes.push({ defindex: 2012, float_value: skuData.output });
+        }
+
+        // Build the payload
+        const payload = {
+            item: {
+                appid: 440,
+                defindex: skuData.defindex,
+                quality: skuData.quality,
+                tradable: skuData.tradable,
+                craftable: skuData.craftable,
+                attributes: attributes
+            },
+            intent: 'buy',
+            currencies: {
+                keys: parseInt(formData.get('buyKeys')) || 0,
+                metal: parseFloat(formData.get('buyMetal')) || 0
+            },
+            details: formData.get('details') || ''
+        };
+
+        console.log('Creating buy order with payload:', payload);
+
+        // Create the listing
+        createBuyOrder(payload);
+    }
+
+    function createBuyOrder(payload) {
+        const url = `https://api.backpack.tf/api/v2/classifieds/listings?token=${BACKPACK_TF_USER_TOKEN}`;
+        const errorMsg = document.getElementById('errorMessage');
+        const submitBtn = document.querySelector('.sku-modal-footer button[type="submit"]');
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Creating...';
+
+        GM_xmlhttpRequest({
+            method: "POST",
+            url: url,
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+            },
+            data: JSON.stringify(payload),
+            onload: function (response) {
+                if (response.status === 201) {
+                    alert('Buy order created successfully!');
+                    closeSKUModal();
+                    // Optionally refresh the page
+                    location.reload();
+                } else {
+                    let errorMessage = "Failed to create buy order";
+                    try {
+                        const responseData = JSON.parse(response.responseText);
+                        errorMessage = responseData.message || errorMessage;
+                    } catch (e) {
+                        console.error("Failed to parse error response:", e);
+                    }
+                    errorMsg.textContent = errorMessage;
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Create Buy Order';
+                }
+            },
+            onerror: function (response) {
+                errorMsg.textContent = 'Network error. Please check your connection and try again.';
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Create Buy Order';
+                console.error("Network error:", response);
+            }
+        });
+    }
+
+    // Add the button to the page
+    function addSKUButton() {
+        const buyOrderColumn = document.querySelector(".col-md-6:last-child");
+        if (!buyOrderColumn) {
+            console.error("Buy order column not found.");
+            return;
+        }
+
+        const skuButton = document.createElement("button");
+        skuButton.innerHTML = '<i class="fa fa-plus"></i> Create Buy Order from SKU';
+        skuButton.className = "sku-create-button btn btn-primary";
+        skuButton.title = "Create a buy order by entering an item SKU";
+        skuButton.onclick = showSKUModal;
+
+        buyOrderColumn.insertBefore(skuButton, buyOrderColumn.firstChild);
+    }
+
+    // Make closeSKUModal globally accessible
+    window.closeSKUModal = closeSKUModal;
+
+    // Initialize when page loads
+    window.addEventListener("load", addSKUButton);
+})();
