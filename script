@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      1.0.0
 // @description  Create buy orders by pasting SKU and selecting attributes
-// @author       Sat-14
+// @author       Based on DRM's script
 // @connect      backpack.tf
 // @match        https://backpack.tf/classifieds*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=backpack.tf
@@ -17,7 +17,7 @@
 
     // Configuration - Add your API key and user token here
     const BACKPACK_TF_API_KEY = "";
-    const BACKPACK_TF_USER_TOKEN = "j";
+    const BACKPACK_TF_USER_TOKEN = "";
 
     GM_addStyle(`
         .sku-creator-modal {
@@ -296,10 +296,14 @@
             result.defindex = parseInt(mainPart);
         }
 
+        // Check if the item is strange elevated first
+        // This needs to be done before processing other attributes
+        const hasStrange = parts.includes('strange');
+        
         // Parse additional attributes
         for (let i = 1; i < parts.length; i++) {
             const part = parts[i];
-
+            
             if (part.startsWith('u')) {
                 result.particle = parseInt(part.substring(1));
             } else if (part === 'australium') {
@@ -318,6 +322,8 @@
                 result.tradable = false;
             } else if (part === 'strange') {
                 result.elevated = true;
+                // If quality is not Strange (11), it's an elevated quality item
+                // Keep the original quality (e.g., Genuine = 1)
             } else if (part.startsWith('c')) {
                 result.crate = parseInt(part.substring(1));
             } else if (part.startsWith('td-')) {
@@ -363,7 +369,7 @@
                     <input type="text" id="sku" name="sku" placeholder="e.g., 5021;6 or 30497;5;u13" required>
                     <div class="sku-info-message">Enter the item SKU (defindex;quality;attributes)</div>
                 </div>
-
+                
                 <div class="sku-item-group">
                     <div class="sku-form-item">
                         <label for="buyKeys">Keys:</label>
@@ -371,8 +377,18 @@
                     </div>
                     <div class="sku-form-item">
                         <label for="buyMetal">Metal (ref):</label>
-                        <input type="number" id="buyMetal" name="buyMetal" step="0.11" value="0">
+                        <input type="number" id="buyMetal" name="buyMetal" step="0.01" value="0">
                     </div>
+                </div>
+
+                <div class="sku-form-item" id="craftableStatus" style="display: none;">
+                    <label>Craftability:</label>
+                    <input type="text" id="craftableDisplay" readonly style="background-color: #f0f0f0; font-weight: bold;">
+                </div>
+
+                <div class="sku-form-item" id="qualityStatus" style="display: none;">
+                    <label>Quality:</label>
+                    <input type="text" id="qualityDisplay" readonly style="background-color: #f0f0f0; font-weight: bold;">
                 </div>
 
                 <div class="sku-form-item">
@@ -447,19 +463,48 @@
         const skuInput = document.getElementById('sku');
         skuInput.addEventListener('blur', function() {
             const skuData = parseSKU(this.value);
+            
+            // Show quality info
+            const qualityNames = {
+                0: "Normal", 1: "Genuine", 3: "Vintage", 5: "Unusual",
+                6: "Unique", 7: "Community", 8: "Valve", 9: "Self-Made",
+                11: "Strange", 13: "Haunted", 14: "Collector's", 15: "Decorated"
+            };
+            
+            if (skuData.quality !== 6 || skuData.elevated) {
+                document.getElementById('qualityStatus').style.display = 'block';
+                let qualityText = qualityNames[skuData.quality] || `Quality ${skuData.quality}`;
+                if (skuData.elevated && skuData.quality !== 11) {
+                    qualityText = `Strange ${qualityText}`;
+                }
+                document.getElementById('qualityDisplay').value = qualityText;
+                document.getElementById('qualityDisplay').style.color = '#FF7F50';
+            } else {
+                document.getElementById('qualityStatus').style.display = 'none';
+            }
+            
             // Show part selectors for Strange quality items
             if (skuData.quality === 11 || skuData.elevated) {
                 document.getElementById('partSelectors').style.display = 'block';
             } else {
                 document.getElementById('partSelectors').style.display = 'none';
             }
-
+            
             // Show target item field for killstreak kits
             if (skuData.targetDefindex) {
                 document.getElementById('targetItemContainer').style.display = 'block';
                 document.getElementById('targetItem').value = `Defindex: ${skuData.targetDefindex}`;
             } else {
                 document.getElementById('targetItemContainer').style.display = 'none';
+            }
+            
+            // Show craftability status
+            if (!skuData.craftable) {
+                document.getElementById('craftableStatus').style.display = 'block';
+                document.getElementById('craftableDisplay').value = 'Non-Craftable';
+                document.getElementById('craftableDisplay').style.color = '#ff6b6b';
+            } else {
+                document.getElementById('craftableStatus').style.display = 'none';
             }
         });
 
@@ -476,7 +521,7 @@
 
     function handleSKUFormSubmit(e) {
         e.preventDefault();
-
+        
         const errorMsg = document.getElementById('errorMessage');
         errorMsg.textContent = '';
 
@@ -563,7 +608,7 @@
         if (skuData.targetDefindex) {
             attributes.push({ defindex: 2012, float_value: skuData.targetDefindex });
         }
-
+        
         // Add output defindex for chemistry sets, strangifiers, etc.
         if (skuData.output) {
             attributes.push({ defindex: 2012, float_value: skuData.output });
@@ -597,7 +642,7 @@
         const url = `https://api.backpack.tf/api/v2/classifieds/listings?token=${BACKPACK_TF_USER_TOKEN}`;
         const errorMsg = document.getElementById('errorMessage');
         const submitBtn = document.querySelector('.sku-modal-footer button[type="submit"]');
-
+        
         submitBtn.disabled = true;
         submitBtn.textContent = 'Creating...';
 
